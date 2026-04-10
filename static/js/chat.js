@@ -347,9 +347,44 @@ window.onload = async () => {
     loadPersistentContacts();
 };
 
-function openOnlineModal() {
+async function openOnlineModal() {
     const modal = document.getElementById('online-modal');
-    if (modal) modal.style.display = 'flex'; 
+    const onlineList = document.getElementById('online-users-list'); // Ensure this ID is in your HTML
+    
+    if (!modal || !onlineList) return;
+    
+    modal.style.display = 'flex';
+    onlineList.innerHTML = '<li style="padding:10px;">Searching...</li>';
+    
+    try {
+        const response = await fetch('/get_online_users');
+        const users = await response.json();
+        
+        onlineList.innerHTML = '';
+        if (users.length === 0) {
+            onlineList.innerHTML = '<li style="padding:10px; color:#94a3b8;">No one else is online.</li>';
+            return;
+        }
+
+        users.forEach(user => {
+            const li = document.createElement('li');
+            li.className = 'online-user-item'; // Style this in CSS
+            li.style.cssText = "display:flex; align-items:center; padding:10px; cursor:pointer; border-bottom:1px solid #eee;";
+            li.onclick = () => {
+                selectUser(user.username); 
+                closeOnlineModal();
+            };
+            
+            li.innerHTML = `
+                <div class="avatar" style="width:30px; height:30px; font-size:0.8rem;">${user.username[0].toUpperCase()}</div>
+                <div style="margin-left:10px;">
+                    <b style="font-size:0.9rem;">${user.username}</b>
+                    <div style="font-size:0.7rem; color:#22c55e;">Available to chat</div>
+                </div>
+            `;
+            onlineList.appendChild(li);
+        });
+    } catch (err) { onlineList.innerHTML = '<li>Error loading.</li>'; }
 }
 
 function closeOnlineModal() {

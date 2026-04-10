@@ -60,10 +60,26 @@ def logout():
 @app.route('/get_contacts')
 @login_required
 def get_contacts():
-    # 1. Fetch all users except the current one
-    # 2. Return their username, online status, and if they have an encryption key
+    # 1. Find all messages where the current user was involved
+    messages = db.messages.find({
+        "$or": [
+            {"sender": current_user.username},
+            {"target": current_user.username}
+        ]
+    })
+    
+    # 2. Extract unique usernames (people you've talked to)
+    chat_partners = set()
+    for msg in messages:
+        chat_partners.add(msg['sender'])
+        chat_partners.add(msg['target'])
+    
+    # Remove yourself from the list
+    chat_partners.discard(current_user.username)
+    
+    # 3. Fetch details for only these specific people
     users = list(db.users.find(
-        {"username": {"$ne": current_user.username}}, 
+        {"username": {"$in": list(chat_partners)}},
         {"username": 1, "online": 1, "public_key": 1}
     ))
     
@@ -77,6 +93,25 @@ def get_contacts():
     
     return jsonify(contact_list)
 
+@app.route('/get_online_users')
+@login_required
+def get_online_users():
+    # 1. Find all users you have already exchanged messages with
+    messaged_users = db.messages.distinct("target", {"sender": current_user.username}) + \
+                     db.messages.distinct("sender", {"target": current_user.username})
+    
+    # 2. Combine them into a "Filter List" (Contacts + Yourself)
+    filter_list = list(set(messaged_users))
+    filter_list.append(current_user.username)
+
+    # 3. Query the database for people who are ONLINE and NOT in your filter list
+    # We MUST return a list of dictionaries so JS can read 'user.username'
+    online_non_contacts = list(db.users.find({
+        "online": True, 
+        "username": {"$nin": filter_list}
+    }, {"_id": 0, "username": 1}))
+
+    return jsonify(online_non_contacts)
 # Ensure this function is called inside your handle_connect and handle_disconnect
 def broadcast_status():
     socketio.emit('status_update') # Tells all clients to refresh their sidebars
