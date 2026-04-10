@@ -1,0 +1,153 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+    --primary: #50e887;
+    --primary-soft: #e0e7ff;
+    --bg-app: #f1f5f9;
+    --sidebar: #ffffff;
+    --text-main: #0f172a;
+    --text-dim: #64748b;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body { 
+    font-family: 'Inter', sans-serif; 
+    background-color: var(--bg-app);
+    height: 100vh;
+    overflow: hidden;
+}
+
+#app { display: flex; flex-direction: column; height: 100vh; }
+
+/* --- Header --- */
+#header { 
+    height: 70px;
+    background: white; 
+    padding: 0 2rem; 
+    display: flex; 
+    justify-content: space-between; 
+    align-items: center;
+    border-bottom: 1px solid #e2e8f0;
+    z-index: 10;
+}
+.logo { font-weight: 700; font-size: 1.4rem; color: var(--primary); letter-spacing: -0.5px; }
+.logo span { color: var(--text-dim); font-weight: 400; font-size: 0.8rem; margin-left: 4px; vertical-align: middle; }
+.logout-btn { 
+    background: #fff1f2; color: #e11d48; 
+    padding: 8px 16px; border-radius: 10px; 
+    text-decoration: none; font-weight: 600; font-size: 0.85rem;
+    transition: 0.2s;
+}
+.logout-btn:hover { background: #ffe4e6; }
+
+/* --- Layout --- */
+#main-container { display: flex; flex: 1; height: calc(100vh - 70px); }
+
+#user-list { 
+    width: 300px; 
+    background: var(--sidebar); 
+    border-right: 1px solid #e2e8f0; 
+    display: flex; flex-direction: column;
+}
+.list-header { padding: 1.5rem; }
+.list-header h3 { font-size: 1.1rem; color: var(--text-main); }
+.online-count { font-size: 0.75rem; color: #10b981; font-weight: 600; text-transform: uppercase; }
+
+#users { list-style: none; overflow-y: auto; }
+#users li { 
+    padding: 1rem 1.5rem; 
+    display: flex; align-items: center;
+    cursor: pointer; transition: 0.2s;
+    border-left: 3px solid transparent;
+}
+#users li:hover { background: #f8fafc; border-left-color: var(--primary); }
+
+/* --- Chat Area --- */
+#main-chat { flex: 1; display: flex; flex-direction: column; background: #f8fafc; }
+#chat-box { 
+    flex: 1; overflow-y: auto; padding: 2rem; 
+    display: flex; flex-direction: column; gap: 1rem;
+}
+
+/* Bubbles */
+.mine, .theirs { 
+    padding: 12px 18px; 
+    border-radius: 18px; 
+    max-width: 60%; 
+    font-size: 0.95rem; 
+    box-shadow: 0 2px 5px rgba(0,0,0,0.03);
+    position: relative;
+}
+.mine { 
+    align-self: flex-end; 
+    background: var(--primary); 
+    color: white; 
+    border-bottom-right-radius: 4px;
+}
+.theirs { 
+    align-self: flex-start; 
+    background: white; 
+    color: var(--text-main); 
+    border-bottom-left-radius: 4px;
+}
+
+/* --- Controls --- */
+#controls { padding: 1.5rem 2.5rem; background: #f8fafc; }
+.input-wrapper { 
+    display: flex; align-items: center; 
+    background: white; padding: 10px 15px; 
+    border-radius: 20px; 
+    box-shadow: 0 10px 15px -3px rgba(0,0,0,0.05);
+    border: 1px solid #e2e8f0;
+}
+#msg-input { 
+    flex: 1; border: none; padding: 10px; outline: none; 
+    font-size: 1rem; background: transparent;
+}
+.attach-btn { 
+    font-size: 1.4rem; color: var(--text-dim); 
+    cursor: pointer; margin-right: 10px;
+    width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;
+}
+#send-btn { 
+    background: var(--primary); color: white; border: none; 
+    width: 45px; height: 45px; border-radius: 15px; 
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; transition: 0.2s;
+}
+#send-btn:hover { transform: scale(1.05); background: #10b64d; }
+.active-chat {
+    background-color: #e0e7ff !important; /* Soft indigo background */
+    border-left: 4px solid #50e887 !important; /* Primary color border */
+    font-weight: 600;
+}
+.status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-left: auto;
+    border: 2px solid white;
+}
+
+.status-dot.online {
+    background-color: #22c55e; /* Bright Green */
+    box-shadow: 0 0 5px #22c55e;
+}
+
+.status-dot.offline {
+    background-color: #94a3b8; /* Grey */
+}
+
+.contact-item {
+    display: flex;
+    align-items: center;
+    padding: 12px 15px;
+    cursor: pointer;
+    transition: background 0.2s;
+    border-radius: 8px;
+    margin-bottom: 5px;
+}
+
+.contact-item:hover { background: #c3c3c3; }
+.contact-item.active { background: var(--primary-soft); }
