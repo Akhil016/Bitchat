@@ -332,6 +332,12 @@ async function renderDecryptedMedia(url, ivBase64, aesKey, type, containerId) {
         document.getElementById(containerId).innerHTML = `<span style="color:red">Failed to load media</span>`;
     }
 }
+// --- Responsive State Management ---
+function toggleView(view) {
+    const container = document.getElementById('main-container');
+    if (view === 'chat') container.classList.add('chat-active');
+    else container.classList.remove('chat-active');
+}
 
 // --- MODALS & SOCKET LISTENERS ---
 socket.on('receive_msg', async (data) => {
