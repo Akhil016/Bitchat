@@ -6,6 +6,50 @@
     <title>BitChat | Private Messaging</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
+    <style>
+        /* Minimal Responsive Overrides */
+        @media (max-width: 768px) {
+            #main-container {
+                position: relative;
+                width: 100%;
+                height: calc(100vh - 60px);
+                overflow: hidden;
+            }
+
+            #user-list {
+                width: 100% !important;
+                position: absolute;
+                left: 0;
+                transition: transform 0.3s ease;
+                z-index: 1;
+            }
+
+            #chat-window {
+                width: 100% !important;
+                position: absolute;
+                left: 0;
+                transform: translateX(100%);
+                transition: transform 0.3s ease;
+                z-index: 2;
+                background: #f8fafc; /* Matches your chat background */
+            }
+
+            /* State: When a chat is selected */
+            #main-container.show-chat #user-list {
+                transform: translateX(-100%);
+            }
+            #main-container.show-chat #chat-window {
+                transform: translateX(0);
+            }
+
+            #mobile-back {
+                display: block !important;
+            }
+            
+            .user-info span { display: none; } /* Hide 'Welcome' text on small screens */
+        }
+    </style>
 </head>
 <body>
 
@@ -59,8 +103,11 @@
         </div>
 
         <main id="main-chat">
-            <div id="chat-header" style="padding: 1rem 2rem; background: white; border-bottom: 1px solid #e2e8f0;">
-                <h3 id="target-header" style="font-size: 1.1rem; color: #0f172a;">Select a contact to start</h3>
+            <div id="chat-header" style="display: flex; align-items: center; padding: 1rem; background: white; border-bottom: 1px solid #e2e8f0;">
+                <button id="mobile-back" onclick="toggleView(false)" style="display: none; background: none; border: none; font-size: 1.2rem; color: var(--primary); margin-right: 15px; cursor: pointer;">
+                    <i class="fa-solid fa-arrow-left"></i>
+                </button>
+                <h3 id="target-header" style="margin: 0; font-size: 1.1rem; color: #0f172a;">Select a contact</h3>
             </div>
 
             <div id="chat-box">
@@ -96,6 +143,29 @@
     document.getElementById('msg-input').addEventListener('keypress', function (e) {
         if (e.key === 'Enter') sendText();
     });
+</script>
+
+<script>
+    // Logic to switch between list and chat on mobile
+    function toggleView(showChat) {
+        const container = document.getElementById('main-container');
+        if (showChat) {
+            container.classList.add('show-chat');
+        } else {
+            container.classList.remove('show-chat');
+        }
+    }
+
+    // Wrap your existing selectUser logic to trigger the mobile transition
+    const originalSelectUser = window.selectUser;
+    window.selectUser = function(target, isGroup) {
+        if (typeof originalSelectUser === 'function') {
+            originalSelectUser(target, isGroup);
+        }
+        if (window.innerWidth <= 768) {
+            toggleView(true);
+        }
+    };
 </script>
 
 </body>
