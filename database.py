@@ -5,7 +5,7 @@ from bson import ObjectId
 
 # Use environment variables for production security
 MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017/")
-client = MongoClient(MONGO_URI)
+client = MongoClient("mongodb+srv://bitchat:bitchat123@typo.xm9vj.mongodb.net/")
 db = client['BitChatDB']
 
 class User:
