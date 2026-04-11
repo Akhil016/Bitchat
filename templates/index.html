@@ -11,7 +11,7 @@
 
 <div id="app">
     <header id="header">
-        <div class="logo">BitChat <span>v2.0</span></div>
+        <div class="logo">BitChat <span>v2.0 E2EE</span></div>
         <div class="user-info">
             <span>Welcome, <b>{{ username }}</b></span>
             <a href="{{ url_for('logout') }}" class="logout-btn">Logout</a>
@@ -20,27 +20,43 @@
 
     <div id="main-container">
         
-            <aside id="user-list">
-            <div class="list-header" style="display: flex; justify-content: space-between; align-items: center;">
+        <aside id="user-list">
+            <div class="list-header" style="display: flex; justify-content: space-between; align-items: center; gap:5px;">
                 <h3>Messages</h3>
-                <button id="show-online-btn" onclick="openOnlineModal()" style="background: var(--primary); color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-size: 0.8rem;">
-                    <i class="fa-solid fa-users"></i> Online
-                </button>
+                <div style="display:flex; gap:5px;">
+                    <button onclick="openGroupModal()" style="background: var(--primary); color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-size: 0.8rem;" title="Create Group">
+                        <i class="fa-solid fa-user-plus"></i> Group
+                    </button>
+                    <button onclick="openOnlineModal()" style="background: var(--primary); color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-size: 0.8rem;">
+                        <i class="fa-solid fa-users"></i> Online
+                    </button>
+                </div>
             </div>
-            <ul id="users">
-                </ul>
+            <ul id="users"></ul>
         </aside>
 
         <div id="online-modal" style="display:none; position: fixed; z-index: 9999; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); align-items: center; justify-content: center;">
-    <div style="background: white; padding: 20px; width: 320px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); position: relative;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px;">
-            <h4 style="margin:0; color: #0f172a;">Online Now</h4>
-            <button onclick="closeOnlineModal()" style="background:none; border:none; font-size: 1.5rem; cursor:pointer; color:#94a3b8;">&times;</button>
+            <div style="background: white; padding: 20px; width: 320px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); position: relative;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px;">
+                    <h4 style="margin:0; color: #0f172a;">Online Now</h4>
+                    <button onclick="closeOnlineModal()" style="background:none; border:none; font-size: 1.5rem; cursor:pointer; color:#94a3b8;">&times;</button>
+                </div>
+                <ul id="online-users-list" style="list-style: none; padding: 0; max-height: 300px; overflow-y: auto;"></ul>
+            </div>
         </div>
-        <ul id="online-users-list" style="list-style: none; padding: 0; max-height: 300px; overflow-y: auto;">
-            </ul>
-    </div>
-</div>
+
+        <div id="group-modal" style="display:none; position: fixed; z-index: 9999; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); align-items: center; justify-content: center;">
+            <div style="background: white; padding: 20px; width: 320px; border-radius: 12px; position: relative;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px;">
+                    <h4 style="margin:0;">Create Encrypted Group</h4>
+                    <button onclick="closeGroupModal()" style="background:none; border:none; font-size: 1.5rem; cursor:pointer;">&times;</button>
+                </div>
+                <input type="text" id="group-name" placeholder="Group Name" style="width: 100%; padding: 8px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 5px;">
+                <p style="font-size: 0.8rem; color: #666; margin-bottom: 5px;">Add Users (comma separated):</p>
+                <input type="text" id="group-members" placeholder="e.g., alice, bob, charlie" style="width: 100%; padding: 8px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 5px;">
+                <button onclick="submitCreateGroup()" style="width: 100%; background: var(--primary); color: white; border: none; padding: 10px; border-radius: 5px; cursor: pointer;">Create Group</button>
+            </div>
+        </div>
 
         <main id="main-chat">
             <div id="chat-header" style="padding: 1rem 2rem; background: white; border-bottom: 1px solid #e2e8f0;">
@@ -77,11 +93,8 @@
 <script src="{{ url_for('static', filename='js/chat.js') }}"></script>
 
 <script>
-    // Handle Enter Key for sending
     document.getElementById('msg-input').addEventListener('keypress', function (e) {
-        if (e.key === 'Enter') {
-            sendText();
-        }
+        if (e.key === 'Enter') sendText();
     });
 </script>
 

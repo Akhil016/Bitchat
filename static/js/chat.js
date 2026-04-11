@@ -2,29 +2,28 @@ const currentUser = document.querySelector('b').innerText;
 const socket = io();
 let myPrivateKey = null;
 let myPublicKeyBase64 = null;
-let currentChatTarget = null;
 
-// --- PRODUCTION SAFE BASE64 CONVERTERS ---
-// Prevents "Maximum call stack size exceeded" on large messages
+// Chat State
+let currentChatTarget = null;
+let isCurrentChatGroup = false;
+let currentGroupMembers = [];
+
+// --- BASE64 CONVERTERS ---
 function bufferToBase64(buf) {
     const bytes = new Uint8Array(buf);
     let binary = '';
-    for (let i = 0; i < bytes.byteLength; i++) {
-        binary += String.fromCharCode(bytes[i]);
-    }
+    for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
     return window.btoa(binary);
 }
 
 function base64ToBuffer(base64) {
     const binary_string = window.atob(base64);
     const bytes = new Uint8Array(binary_string.length);
-    for (let i = 0; i < binary_string.length; i++) {
-        bytes[i] = binary_string.charCodeAt(i);
-    }
+    for (let i = 0; i < binary_string.length; i++) bytes[i] = binary_string.charCodeAt(i);
     return bytes.buffer;
 }
 
-// --- E2EE ENGINE ---
+// --- E2EE ENGINE (RSA & AES) ---
 async function initCrypto() {
     const storedPriv = localStorage.getItem(`priv_${currentUser}`);
     const storedPub = localStorage.getItem(`pub_${currentUser}`);
@@ -42,370 +41,357 @@ async function initCrypto() {
         localStorage.setItem(`pub_${currentUser}`, myPublicKeyBase64);
         
         myPrivateKey = keys.privateKey;
-        socket.emit('store_pub_key', { pub_key: myPublicKeyBase64 });
     } else {
         const privBuf = new Uint8Array(JSON.parse(storedPriv));
         myPrivateKey = await window.crypto.subtle.importKey("pkcs8", privBuf, { name: "RSA-OAEP", hash: "SHA-256" }, false, ["decrypt"]);
         myPublicKeyBase64 = storedPub;
-        socket.emit('store_pub_key', { pub_key: myPublicKeyBase64 });
     }
+    socket.emit('store_pub_key', { pub_key: myPublicKeyBase64 });
 }
 
-async function encryptData(plainText, pubKeyBase64) {
+// 1-on-1 Text Encryption
+async function encryptRSA(plainText, pubKeyBase64) {
     try {
         const binaryKey = base64ToBuffer(pubKeyBase64);
         const pubKey = await window.crypto.subtle.importKey("spki", binaryKey, { name: "RSA-OAEP", hash: "SHA-256" }, false, ["encrypt"]);
         const encoded = new TextEncoder().encode(plainText);
         const encrypted = await window.crypto.subtle.encrypt({ name: "RSA-OAEP" }, pubKey, encoded);
         return bufferToBase64(encrypted);
-    } catch (e) {
-        console.error("Encryption failed:", e);
-        return null;
-    }
+    } catch (e) { return null; }
 }
 
-async function decryptData(encryptedBase64) {
+async function decryptRSA(encryptedBase64) {
     try {
         const binary = base64ToBuffer(encryptedBase64);
         const decrypted = await window.crypto.subtle.decrypt({ name: "RSA-OAEP" }, myPrivateKey, binary);
         return new TextDecoder().decode(decrypted);
-    } catch (e) { 
-        return "⚠️ [Decryption Error: Key mismatch or corrupted data]"; 
-    }
+    } catch (e) { return "⚠️ [Decryption Error]"; }
 }
 
-// --- CORE FUNCTIONS ---
-async function loadPersistentContacts() {
-    const listContainer = document.getElementById('users');
-    if (!listContainer) return;
-
-    try {
-        const response = await fetch('/get_contacts');
-        const data = await response.json();
-        
-        listContainer.innerHTML = ''; 
-
-        if (data.length === 0) {
-            listContainer.innerHTML = '<li style="text-align:center; padding: 20px; color:#94a3b8;">No recent chats.</li>';
-            return;
-        }
-
-        data.forEach(user => {
-            const li = document.createElement('li');
-            li.className = `contact-item ${currentChatTarget === user.username ? 'active' : ''}`;
-            li.onclick = () => selectUser(user.username);
-
-            const statusClass = user.online ? 'online' : 'offline';
-            li.innerHTML = `
-                <div class="avatar">${user.username[0].toUpperCase()}</div>
-                <div class="user-details">
-                    <div class="contact-name">${user.username}</div>
-                    <div class="contact-status">${user.online ? 'Online' : 'Offline'}</div>
-                </div>
-                <div class="status-dot ${statusClass}"></div>
-            `;
-            listContainer.appendChild(li);
-        });
-    } catch (err) { console.error("Sidebar load error:", err); }
+// Hybrid N-Way Encryption (Files & Groups)
+async function generateAESKey() {
+    return await window.crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
 }
-// Add this at the top with your other variables
-let contacts = []; 
 
-// --- THE FIX FOR THE SIDEBAR ---
+// --- SIDEBAR & GROUPS ---
 async function refreshSidebar() {
     try {
-        const response = await fetch('/get_contacts');
-        const data = await response.json();
+        // Only one fetch is needed because /get_contacts already includes groups
+        const res = await fetch('/get_contacts');
+        const data = await res.json(); // This is { users: [...], groups: [...] }
         
         const listContainer = document.getElementById('users');
-        if (!listContainer) return; // Prevent errors if UI isn't ready
+        if (!listContainer) return; 
+        listContainer.innerHTML = ''; 
 
-        listContainer.innerHTML = ''; // Clear current list
-
-        data.forEach(user => {
+        // 1. Render Groups
+        data.groups.forEach(group => {
             const li = document.createElement('li');
-            li.className = `contact-item ${currentChatTarget === user.username ? 'active' : ''}`;
-            li.onclick = () => selectUser(user.username);
-
-            // Logic for the Green Online Dot
-            const statusClass = user.online ? 'online' : 'offline';
-            const lockIcon = user.has_key ? '<i class="fa-solid fa-lock-shield" style="color:#50e887; font-size:0.7rem;"></i>' : '';
-
+            // Fixed: use 'active-chat' to match your selectUser logic
+            li.className = `contact-item ${currentChatTarget === group._id ? 'active-chat' : ''}`;
+            li.onclick = () => selectUser(group._id, true);
             li.innerHTML = `
-                <div class="avatar">${user.username[0].toUpperCase()}</div>
-                <div class="user-details">
-                    <div class="contact-name">${user.username} ${lockIcon}</div>
-                    <div class="contact-status">${user.online ? 'Online' : 'Offline'}</div>
+                <div class="avatar" style="width:35px; height:35px; background:#f59e0b; color:white; display:flex; align-items:center; justify-content:center; border-radius:50%; margin-right:12px;">
+                    <i class="fa-solid fa-user-group"></i>
                 </div>
-                <div class="status-dot ${statusClass}"></div>
+                <div class="user-details" style="flex:1;">
+                    <div class="contact-name" style="font-weight:600;">${group.name}</div>
+                    <div class="contact-status" style="font-size:0.75rem;">Group • ${group.members.length} members</div>
+                </div>
             `;
             listContainer.appendChild(li);
         });
-    } catch (err) {
-        console.error("Failed to load contacts:", err);
+
+        // 2. Render Individual Contacts
+        data.users.forEach(user => {
+            const li = document.createElement('li');
+            li.className = `contact-item ${currentChatTarget === user.username ? 'active-chat' : ''}`;
+            li.onclick = () => selectUser(user.username, false);
+            const statusClass = user.online ? 'online' : 'offline';
+            li.innerHTML = `
+                <div class="avatar" style="width:35px; height:35px; background:var(--primary); color:white; display:flex; align-items:center; justify-content:center; border-radius:50%; margin-right:12px;">${user.username[0].toUpperCase()}</div>
+                <div class="user-details" style="flex:1;">
+                    <div class="contact-name" style="font-weight:600;">${user.username}</div>
+                    <div class="contact-status" style="font-size:0.8rem;">${user.online ? 'Online' : 'Offline'}</div>
+                </div>
+                <div class="status-dot ${statusClass}" style="width:10px; height:10px; border-radius:50%; background:${user.online ? '#22c55e' : '#94a3b8'};"></div>
+            `;
+            listContainer.appendChild(li);
+        });
+    } catch (err) { 
+        console.error("Sidebar load failed:", err); 
     }
 }
 
-
-async function selectUser(username) {
-    currentChatTarget = username;
-    const header = document.getElementById('target-header');
-    if (header) header.innerText = username;
-
-    document.querySelectorAll('#users li').forEach(li => {
-        li.classList.remove('active-chat'); 
-        const nameDiv = li.querySelector('.contact-name');
-        if (nameDiv && nameDiv.innerText.trim() === username) li.classList.add('active-chat');
-    });
-
-    socket.emit('get_pub_key', { target: username }, (data) => {
-        if (!data.pub_key) {
-            header.innerHTML = `${username} <span style="color:orange; font-size:0.7rem;">(Not Encrypted - User Offline/No Key)</span>`;
-        } else {
-            header.innerHTML = `${username} <span style="color:green; font-size:0.7rem;">(Encrypted)</span>`;
-        }
-    });
-
+async function selectUser(targetId, isGroup) {
+    currentChatTarget = targetId;
+    isCurrentChatGroup = isGroup;
+    
     const chatBox = document.getElementById('chat-box');
-    chatBox.innerHTML = '<div style="text-align:center; padding:20px; opacity:0.5;">Loading conversation...</div>';
+    const header = document.getElementById('target-header');
+    chatBox.innerHTML = '<div style="text-align:center; padding:20px; opacity:0.5;">Loading history...</div>';
+
+    document.querySelectorAll('#users li').forEach(li => li.classList.remove('active-chat'));
 
     try {
-        const res = await fetch(`/get_history/${username}`);
-        const messages = await res.json();
+        const res = await fetch(`/get_history/${targetId}`);
+        const data = await res.json();
         chatBox.innerHTML = ''; 
-
-        if (messages.length === 0) {
-            chatBox.innerHTML = '<div style="text-align:center; padding:20px; opacity:0.3;">No messages yet. Say hi!</div>';
+        
+        if (isGroup) {
+            currentGroupMembers = data.members;
+            header.innerHTML = `${data.name} <span style="color:green; font-size:0.7rem;">(Group E2EE)</span>`;
+        } else {
+            header.innerHTML = `${targetId} <span style="color:green; font-size:0.7rem;">(E2EE)</span>`;
         }
 
-        for (let msg of messages) {
-            if (msg.encrypted) {
-                if (msg.target === currentUser) {
-                    msg.content = await decryptData(msg.content);
-                } else if (msg.sender === currentUser && msg.sender_content) {
-                    msg.content = await decryptData(msg.sender_content);
-                } else {
-                    msg.content = "⚠️ [Encrypted Message]";
-                }
-            }
+        if (data.messages.length === 0) chatBox.innerHTML = '<div style="text-align:center; opacity:0.3; margin-top:20px;">No messages yet. Say hi!</div>';
+
+        for (let msg of data.messages) {
+            await decryptMessagePayload(msg);
             appendMessage(msg, msg.sender === currentUser);
         }
-        socket.emit('read_event', { sender: username, user: currentUser });
-        
-    } catch (err) {
-        chatBox.innerHTML = '<div style="text-align:center; color:red;">Failed to load messages.</div>';
-    }
+    } catch (err) { chatBox.innerHTML = '<div style="color:red; text-align:center;">Failed to load.</div>'; }
 }
 
-function sendText() {
+// --- SENDING MESSAGES ---
+async function sendText() {
     const input = document.getElementById('msg-input');
-    if (!currentChatTarget) return alert("Select a contact first.");
-    
-    if (input.value.length > 150) {
-        alert("Message too long for RSA encryption. Please keep it under 150 characters.");
-        return;
-    }
+    const content = input.value.trim();
+    if (!content || !currentChatTarget) return;
+    input.value = "";
 
-    if (input.value.trim() !== "") {
-        sendMessage(input.value, 'text', currentChatTarget);
-        input.value = "";
-    }
-}
+    const msgData = {
+        sender: currentUser,
+        target: currentChatTarget,
+        type: 'text',
+        is_group: isCurrentChatGroup,
+        encrypted: true
+    };
 
-function sendMessage(content, type, target) {
-    socket.emit('get_pub_key', { target: target }, async (data) => {
-        let msgData = { sender: currentUser, target: target, type: type, timestamp: new Date().toISOString() };
+    if (isCurrentChatGroup) {
+        const aesKey = await generateAESKey();
+        const iv = window.crypto.getRandomValues(new Uint8Array(12));
+        const encContentBuf = await window.crypto.subtle.encrypt(
+            { name: "AES-GCM", iv: iv }, aesKey, new TextEncoder().encode(content)
+        );
+        msgData.content = bufferToBase64(encContentBuf);
+        msgData.iv = bufferToBase64(iv);
+        msgData.keys = await encryptAESKeyForMembers(aesKey, currentGroupMembers);
         
-        if (data.pub_key) {
-            msgData.content = await encryptData(content, data.pub_key);
-            msgData.sender_content = await encryptData(content, myPublicKeyBase64);
-            msgData.encrypted = true;
-        } else {
-            msgData.content = content; 
-            msgData.encrypted = false;
-        }
-
-        if(msgData.content === null) return alert("Encryption failed. Try a shorter message.");
-
         socket.emit('send_msg', msgData);
-        appendMessage({...msgData, content: content}, true);
-    });
-}
-
-function renderUserList(list, elementId, isOnlineList) {
-    const container = document.getElementById(elementId);
-    if (!container) return;
-
-    if (list.length === 0) {
-        container.innerHTML = `<li style="padding:15px; color:#94a3b8; text-align:center; font-size:0.8rem;">No users found</li>`;
-        return;
+        // REMOVED: appendMessage(...) 
+    } else {
+        socket.emit('get_pub_key', { target: currentChatTarget }, async (data) => {
+            if (!data.pub_key) return alert("User missing encryption key");
+            msgData.content = await encryptRSA(content, data.pub_key);
+            msgData.sender_content = await encryptRSA(content, myPublicKeyBase64);
+            socket.emit('send_msg', msgData);
+            // REMOVED: appendMessage(...)
+        });
     }
-
-    container.innerHTML = list.map(u => `
-        <li onclick="handleUserSelect('${u}')" class="contact-item ${currentChatTarget === u ? 'active-chat' : ''}">
-            <div class="user-avatar" style="width: 35px; height: 35px; background: #50e887; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; margin-right: 12px;">
-                ${u[0].toUpperCase()}
-            </div>
-            <div class="user-details">
-                <div class="contact-name" style="font-weight: 600; color: #0f172a;">${u}</div>
-                ${isOnlineList ? '<div style="font-size: 0.7rem; color: #10b981;">● Online</div>' : ''}
-            </div>
-        </li>
-    `).join('');
 }
-
-function handleUserSelect(username) {
-    closeOnlineModal();
-    selectUser(username);
-}
-
-socket.on('receive_msg', async (data) => {
-    if (data.sender === currentChatTarget) {
-        if (data.encrypted) data.content = await decryptData(data.content);
-        appendMessage(data, false);
-        socket.emit('read_event', { sender: data.sender, user: currentUser });
-    }
-});
-
-socket.on('user_status_update', (userList) => {
-    const others = userList.filter(u => u !== currentUser);
-    // Update the modal
-    renderUserList(others, 'online-users-list', true);
-    
-    // PRODUCTION FIX: Also update the sidebar indicators in real-time
-    document.querySelectorAll('#users li').forEach(li => {
-        const name = li.querySelector('.contact-name').innerText;
-        updateSidebarStatus(name, others.includes(name));
-    });
-});
 
 async function uploadMedia(file) {
     if (!file || !currentChatTarget) return;
-    let formData = new FormData();
-    formData.append('file', file);
-    const res = await fetch('/upload', { method: 'POST', body: formData });
-    const data = await res.json();
-    let type = file.type.startsWith('image') ? 'image' : file.type.startsWith('video') ? 'video' : 'file';
-    sendMessage(data.url, type, currentChatTarget);
+    
+    const fileType = file.type.startsWith('image/') ? 'image' : file.type.startsWith('video/') ? 'video' : 'file';
+    const aesKey = await generateAESKey();
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
+    const fileBuf = await file.arrayBuffer();
+    const encFileBuf = await window.crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, aesKey, fileBuf);
+
+    const formData = new FormData();
+    formData.append('file', new Blob([encFileBuf]));
+    const uploadRes = await fetch('/upload', { method: 'POST', body: formData });
+    const data = await uploadRes.json();
+
+    const msgData = {
+        sender: currentUser,
+        target: currentChatTarget,
+        type: fileType,
+        content: data.url,
+        is_group: isCurrentChatGroup,
+        iv: bufferToBase64(iv),
+        encrypted: true
+    };
+
+    if (isCurrentChatGroup) {
+        msgData.keys = await encryptAESKeyForMembers(aesKey, currentGroupMembers);
+    } else {
+        msgData.keys = await encryptAESKeyForMembers(aesKey, [currentUser, currentChatTarget]);
+    }
+
+    socket.emit('send_msg', msgData);
+    appendMessage(msgData, true); // Append before decrypting locally is complex, rely on receive_msg bounce for sender if preferred, or render skeleton
+    document.getElementById('media-input').value = '';
 }
-function updateSidebarStatus(username, isOnline) {
-    const sidebarItems = document.querySelectorAll('#users li');
-    sidebarItems.forEach(li => {
-        const name = li.querySelector('.contact-name').innerText;
-        if(name === username) {
-            // Add or remove a green dot/status text
-            let statusDiv = li.querySelector('.status-indicator');
-            if(!statusDiv) {
-                statusDiv = document.createElement('div');
-                statusDiv.className = 'status-indicator';
-                statusDiv.style = "font-size: 0.7rem; color: #10b981;";
-                li.querySelector('.user-details').appendChild(statusDiv);
-            }
-            statusDiv.innerText = isOnline ? '● Online' : '';
-        }
+
+// --- N-WAY ENCRYPTION HELPER ---
+async function encryptAESKeyForMembers(aesKey, membersArr) {
+    const rawAes = await window.crypto.subtle.exportKey("raw", aesKey);
+    const keysDict = {};
+    
+    // Fetch all public keys for the array of members
+    const res = await fetch('/get_group_keys', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ members: membersArr })
     });
+    const memberPubKeys = await res.json();
+
+    for (let member of membersArr) {
+        const pubBase64 = memberPubKeys[member];
+        if (pubBase64) {
+            const rsaPubKey = await window.crypto.subtle.importKey(
+                "spki", base64ToBuffer(pubBase64), { name: "RSA-OAEP", hash: "SHA-256" }, false, ["encrypt"]
+            );
+            const encRaw = await window.crypto.subtle.encrypt({ name: "RSA-OAEP" }, rsaPubKey, rawAes);
+            keysDict[member] = bufferToBase64(encRaw);
+        }
+    }
+    return keysDict;
 }
+
+// --- DECRYPTION ENGINE ---
+async function decryptMessagePayload(msg) {
+    if (!msg.encrypted) return;
+
+    if (msg.is_group || msg.keys) {
+        // HYBRID/N-WAY DECRYPTION (Groups Text/Media, 1on1 Media)
+        const myEncAesKey = msg.keys ? msg.keys[currentUser] : null;
+        if (!myEncAesKey) {
+            msg.content = "⚠️ [Not Encrypted for You]";
+            return;
+        }
+        try {
+            const aesKeyBuf = await window.crypto.subtle.decrypt(
+                { name: "RSA-OAEP" }, myPrivateKey, base64ToBuffer(myEncAesKey)
+            );
+            const aesKey = await window.crypto.subtle.importKey("raw", aesKeyBuf, { name: "AES-GCM" }, false, ["decrypt"]);
+            
+            if (msg.type === 'text') {
+                const decTextBuf = await window.crypto.subtle.decrypt(
+                    { name: "AES-GCM", iv: base64ToBuffer(msg.iv) }, aesKey, base64ToBuffer(msg.content)
+                );
+                msg.content = new TextDecoder().decode(decTextBuf);
+            } else {
+                // Attach key for media elements to decrypt on the fly
+                msg.unlockedAesKey = aesKey; 
+            }
+        } catch (e) { msg.content = "⚠️ [Decryption Failed]"; }
+    } else {
+        // LEGACY 1-ON-1 RSA TEXT DECRYPTION
+        if (msg.target === currentUser) msg.content = await decryptRSA(msg.content);
+        else if (msg.sender === currentUser && msg.sender_content) msg.content = await decryptRSA(msg.sender_content);
+        else msg.content = "⚠️ [Encrypted]";
+    }
+}
+
+// --- RENDERING ---
 function appendMessage(data, isMine) {
     const chatBox = document.getElementById('chat-box');
+    if (!chatBox) return;
+    
+    // Check if this message belongs in the current active chat
+    const belongsToCurrentChat = isCurrentChatGroup 
+        ? data.target === currentChatTarget
+        : (data.sender === currentChatTarget || data.target === currentChatTarget);
+        
+    if (!belongsToCurrentChat && data.sender !== currentUser) return; // Ignore background messages
+
     const msgDiv = document.createElement('div');
     msgDiv.className = isMine ? 'mine' : 'theirs';
-    
     const time = data.timestamp ? new Date(data.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "";
-    
-    let body = '';
-    if (data.type === 'image') body = `<img src="${data.content}" style="max-width:250px; border-radius:8px;">`;
-    else if (data.type === 'video') body = `<video src="${data.content}" controls style="max-width:200px;"></video>`;
-    else body = `<p class="msg-content">${data.content}</p>`;
-    
-    const ticks = isMine ? `<span class="tick" style="color: ${data.read ? '#34b7f1' : '#94a3b8'};">✔✔</span>` : '';
-    
-    msgDiv.innerHTML = `
-        <div class="bubble">
-            ${body}
-            <div style="font-size:0.65rem; opacity:0.5; text-align:right; margin-top:4px;">${time} ${ticks}</div>
-        </div>
-    `;
-    
-    chatBox.appendChild(msgDiv);
+    const senderTag = (data.is_group && !isMine) ? `<div style="font-size:0.7rem; color:#f59e0b; font-weight:bold; margin-bottom:4px;">${data.sender}</div>` : '';
+
+    if (data.type === 'text') {
+        msgDiv.innerHTML = `<div class="bubble">${senderTag}<p class="msg-content">${data.content}</p><div style="font-size:0.65rem; opacity:0.5; text-align:right;">${time}</div></div>`;
+        chatBox.appendChild(msgDiv);
+    } else {
+        const mediaId = `media-${Math.random().toString(36).substr(2, 9)}`;
+        msgDiv.innerHTML = `<div class="bubble">${senderTag}<div id="${mediaId}">Decrypting Media...</div><div style="font-size:0.65rem; opacity:0.5; text-align:right;">${time}</div></div>`;
+        chatBox.appendChild(msgDiv);
+        if (data.unlockedAesKey) renderDecryptedMedia(data.content, data.iv, data.unlockedAesKey, data.type, mediaId);
+    }
     chatBox.scrollTop = chatBox.scrollHeight;
 }
 
-// --- SOCKET LISTENERS ---
+async function renderDecryptedMedia(url, ivBase64, aesKey, type, containerId) {
+    try {
+        const res = await fetch(url);
+        const encFileBuf = await res.arrayBuffer();
+        const decFileBuf = await window.crypto.subtle.decrypt({ name: "AES-GCM", iv: base64ToBuffer(ivBase64) }, aesKey, encFileBuf);
+        
+        const blob = new Blob([decFileBuf], { type: type === 'image' ? 'image/png' : 'video/mp4' });
+        const objUrl = URL.createObjectURL(blob);
+        const container = document.getElementById(containerId);
+        
+        if (type === 'image') container.innerHTML = `<img src="${objUrl}" style="max-width:250px; border-radius:8px;">`;
+        else container.innerHTML = `<video src="${objUrl}" controls style="max-width:200px; border-radius:8px;"></video>`;
+    } catch (e) {
+        document.getElementById(containerId).innerHTML = `<span style="color:red">Failed to load media</span>`;
+    }
+}
 
-socket.on('msg_read_confirmed', () => {
-    document.querySelectorAll('.mine .tick').forEach(t => t.style.color = '#34b7f1');
+// --- MODALS & SOCKET LISTENERS ---
+socket.on('receive_msg', async (data) => {
+    // Only decrypt if it's meant for our eyes
+    if (data.is_group || data.target === currentUser || data.sender === currentUser) {
+        await decryptMessagePayload(data);
+        appendMessage(data, data.sender === currentUser);
+    }
 });
 
-window.onload = async () => {
-    try {
-        await initCrypto();
-    } catch (e) {
-        console.warn("Encryption unavailable (Need HTTPS):", e);
-        alert("Warning: Encryption disabled. Use HTTPS for private messaging.");
-    }
-    // Always load contacts even if crypto fails
-    loadPersistentContacts();
-};
-
-async function openOnlineModal() {
-    const modal = document.getElementById('online-modal');
-    const onlineList = document.getElementById('online-users-list'); // Ensure this ID is in your HTML
-    
-    if (!modal || !onlineList) return;
-    
-    modal.style.display = 'flex';
-    onlineList.innerHTML = '<li style="padding:10px;">Searching...</li>';
-    
-    try {
-        const response = await fetch('/get_online_users');
-        const users = await response.json();
-        
-        onlineList.innerHTML = '';
-        if (users.length === 0) {
-            onlineList.innerHTML = '<li style="padding:10px; color:#94a3b8;">No one else is online.</li>';
-            return;
+socket.on('group_update', (data) => {
+    // If I am the user affected, join/leave the room
+    if (data.user === currentUser) {
+        if (data.action === 'add') {
+            socket.emit('join_group_room', { group_id: data.group_id });
+        } else {
+            socket.emit('leave_group_room', { group_id: data.group_id });
         }
-
-        users.forEach(user => {
-            const li = document.createElement('li');
-            li.className = 'online-user-item'; // Style this in CSS
-            li.style.cssText = "display:flex; align-items:center; padding:10px; cursor:pointer; border-bottom:1px solid #eee;";
-            li.onclick = () => {
-                selectUser(user.username); 
-                closeOnlineModal();
-            };
-            
-            li.innerHTML = `
-                <div class="avatar" style="width:30px; height:30px; font-size:0.8rem;">${user.username[0].toUpperCase()}</div>
-                <div style="margin-left:10px;">
-                    <b style="font-size:0.9rem;">${user.username}</b>
-                    <div style="font-size:0.7rem; color:#22c55e;">Available to chat</div>
-                </div>
-            `;
-            onlineList.appendChild(li);
-        });
-    } catch (err) { onlineList.innerHTML = '<li>Error loading.</li>'; }
-}
-
-function closeOnlineModal() {
-    const modal = document.getElementById('online-modal');
-    if (modal) modal.style.display = 'none';
-}
-
-window.onclick = function(event) {
-    const modal = document.getElementById('online-modal');
-    if (event.target == modal) {
-        modal.style.display = "none";
     }
-}
-
-// When anyone logs in/out, the server says 'status_update'
-socket.on('status_update', () => {
     refreshSidebar();
 });
 
-// Update your window.onload to use the new name
+socket.on('status_update', () => refreshSidebar());
+
+// Group Creation
+function openGroupModal() { document.getElementById('group-modal').style.display = 'flex'; }
+function closeGroupModal() { document.getElementById('group-modal').style.display = 'none'; }
+async function submitCreateGroup() {
+    const name = document.getElementById('group-name').value;
+    const membersRaw = document.getElementById('group-members').value;
+    const members = membersRaw.split(',').map(s => s.trim()).filter(s => s);
+    
+    if(!name || members.length === 0) return alert("Fill all fields");
+    
+    const res = await fetch('/create_group', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name, members})
+    });
+    if((await res.json()).success) {
+        closeGroupModal();
+        refreshSidebar();
+    }
+}
+
+// Online Modal (Legacy code intact)
+async function openOnlineModal() {
+    const modal = document.getElementById('online-modal');
+    modal.style.display = 'flex';
+    const list = document.getElementById('online-users-list');
+    list.innerHTML = '<li>Loading...</li>';
+    try {
+        const res = await fetch('/get_online_users');
+        const users = await res.json();
+        list.innerHTML = users.map(u => `<li onclick="selectUser('${u.username}', false); closeOnlineModal()" style="padding:10px; cursor:pointer;">${u.username} (Online)</li>`).join('');
+    } catch(e) { list.innerHTML = '<li>Error</li>'; }
+}
+function closeOnlineModal() { document.getElementById('online-modal').style.display = 'none'; }
+
+// Init
 window.onload = async () => {
     await initCrypto();
-    refreshSidebar(); // Use the new function name here!
+    refreshSidebar();
 };
